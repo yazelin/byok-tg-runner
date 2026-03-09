@@ -686,6 +686,24 @@ async def _process_implement(req: ImplementRequest, task_id: str) -> None:
                 f"✅ {req.action} done for {req.repo} #{req.issue_number or req.pr_number} ({status_msg})",
             )
 
+            # Auto-dispatch review if a PR was created
+            if status_msg != "no changes":
+                pr_num = await _read_gh_output(
+                    "gh", "pr", "list", "--repo", req.repo,
+                    "--state", "open", "--json", "number", "--jq", ".[0].number",
+                )
+                if pr_num and pr_num.isdigit():
+                    print(f"[implement] auto-dispatching review for PR #{pr_num}")
+                    review_req = ImplementRequest(
+                        repo=req.repo, action="review",
+                        pr_number=int(pr_num),
+                        notify_repo=req.notify_repo,
+                        notify_chat_id=req.notify_chat_id,
+                    )
+                    asyncio.create_task(
+                        _process_implement(review_req, f"review-{int(time.time())}")
+                    )
+
         elif req.action == "review":
             # Fallback: if AI didn't take action, auto-merge
             pr_state = await _read_gh_output(
@@ -707,6 +725,7 @@ async def _process_implement(req: ImplementRequest, task_id: str) -> None:
                         req.notify_repo, req.notify_chat_id,
                         f"🔀 auto-merged {req.repo} PR #{req.pr_number} (review took no action)",
                     )
+                    pr_state = "MERGED"  # for next-issue dispatch below
                 else:
                     await _notify_telegram(
                         req.notify_repo, req.notify_chat_id,
@@ -722,6 +741,31 @@ async def _process_implement(req: ImplementRequest, task_id: str) -> None:
                     req.notify_repo, req.notify_chat_id,
                     f"✅ review done for {req.repo} PR #{req.pr_number} (state: {pr_state})",
                 )
+
+            # After merge, auto-dispatch next issue
+            if pr_state == "MERGED":
+                next_issue = await _read_gh_output(
+                    "gh", "issue", "list", "--repo", req.repo,
+                    "--state", "open", "--label", "copilot-task",
+                    "--json", "number,labels",
+                    "--jq", '[.[] | select(.labels | map(.name) | (contains(["agent-stuck"]) or contains(["needs-human-review"])) | not)] | sort_by(.number) | .[0].number',
+                )
+                if next_issue and next_issue.isdigit():
+                    print(f"[implement] auto-dispatching implement for next issue #{next_issue}")
+                    next_req = ImplementRequest(
+                        repo=req.repo, action="implement",
+                        issue_number=int(next_issue),
+                        notify_repo=req.notify_repo,
+                        notify_chat_id=req.notify_chat_id,
+                    )
+                    asyncio.create_task(
+                        _process_implement(next_req, f"impl-{int(time.time())}")
+                    )
+                else:
+                    await _notify_telegram(
+                        req.notify_repo, req.notify_chat_id,
+                        f"✅ {req.repo} all issues completed!",
+                    )
 
         print(f"[implement] completed task_id={task_id}")
 
