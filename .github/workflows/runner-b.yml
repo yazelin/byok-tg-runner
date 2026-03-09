@@ -66,8 +66,18 @@ jobs:
       - name: Start cloudflared quick tunnel and register URL
         run: |
           cloudflared tunnel --url http://localhost:8000 --logfile /tmp/cf.log &
-          sleep 10
-          TUNNEL_URL=$(grep -oP 'https://\S+\.trycloudflare\.com' /tmp/cf.log | head -1)
+          # Wait up to 30s for tunnel URL to appear in log
+          for attempt in $(seq 1 6); do
+            sleep 5
+            TUNNEL_URL=$(grep -oP 'https://\S+\.trycloudflare\.com' /tmp/cf.log | head -1)
+            [ -n "$TUNNEL_URL" ] && break
+            echo "Waiting for tunnel URL (attempt $attempt/6)..."
+          done
+          if [ -z "$TUNNEL_URL" ]; then
+            echo "ERROR: Failed to get tunnel URL after 30s"
+            cat /tmp/cf.log
+            exit 1
+          fi
           echo "Tunnel URL: $TUNNEL_URL"
           curl -sf -X PUT \
             "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CF_ACCOUNT_ID }}/storage/kv/namespaces/${{ secrets.KV_NAMESPACE_ID }}/values/runner_b_url" \
