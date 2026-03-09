@@ -39,7 +39,7 @@ client: CopilotClient = None
 def load_tools():
     """Load tools from server/tools.py."""
     try:
-        from tools import ALL_TOOLS
+        from server.tools import ALL_TOOLS
         print(f"[init] loaded {len(ALL_TOOLS)} tools")
         return ALL_TOOLS
     except Exception as e:
@@ -263,7 +263,7 @@ async def debug():
     error = None
     tools = []
     try:
-        from tools import ALL_TOOLS
+        from server.tools import ALL_TOOLS
         tools = ALL_TOOLS
     except Exception as e:
         import traceback

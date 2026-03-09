@@ -51,14 +51,14 @@ class GetWeatherParams(BaseModel):
 
 @define_tool(description="Create a new public GitHub repository under the aw-apps organization. Returns {ok, repo, url} or {ok: false, error}.")
 async def create_repo(params: CreateRepoParams) -> str:
-    from app_factory import create_repo as _create_repo
+    from server.app_factory import create_repo as _create_repo
     result = await _create_repo(params.name, params.description)
     return json.dumps(result)
 
 
 @define_tool(description="Clone a repo, write files to it, push, and enable GitHub Pages. files_json is a JSON array of {path, content} objects.")
 async def setup_repo(params: SetupRepoParams) -> str:
-    from app_factory import setup_repo as _setup_repo
+    from server.app_factory import setup_repo as _setup_repo
     files = json.loads(params.files_json)
     result = await _setup_repo(params.repo, files)
     return json.dumps(result)
@@ -66,7 +66,7 @@ async def setup_repo(params: SetupRepoParams) -> str:
 
 @define_tool(description="Create issues with copilot-task label in a repository. issues_json is a JSON array of {title, body} objects.")
 async def create_issues(params: CreateIssuesParams) -> str:
-    from app_factory import create_issues as _create_issues
+    from server.app_factory import create_issues as _create_issues
     issues = json.loads(params.issues_json)
     result = await _create_issues(params.repo, issues)
     return json.dumps(result)
@@ -74,7 +74,7 @@ async def create_issues(params: CreateIssuesParams) -> str:
 
 @define_tool(description="Set required secrets (RUNNER_API_KEY, RUNNER_URL, etc.) on a child repository.")
 async def setup_secrets(params: SetupSecretsParams) -> str:
-    from app_factory import setup_secrets as _setup_secrets
+    from server.app_factory import setup_secrets as _setup_secrets
     result = await _setup_secrets(params.repo)
     return json.dumps(result)
 
