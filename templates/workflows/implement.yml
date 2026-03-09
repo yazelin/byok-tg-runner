@@ -59,7 +59,7 @@ jobs:
 
           # CASE B: Open issue with copilot-task label?
           ISSUE_JSON=$(gh issue list --state open --label copilot-task --json number,title,labels \
-            --jq '[.[] | select(.labels | map(.name) | (contains(["agent-stuck"]) or contains(["needs-human-review"])) | not)] | sort_by(.number) | .[0]')
+            | jq '[.[] | select(.labels | map(.name) | (contains(["agent-stuck"]) or contains(["needs-human-review"])) | not)] | sort_by(.number) | .[0]')
 
           if [ -n "$ISSUE_JSON" ] && [ "$ISSUE_JSON" != "null" ]; then
             ISSUE_NUM=$(echo "$ISSUE_JSON" | jq -r '.number')
