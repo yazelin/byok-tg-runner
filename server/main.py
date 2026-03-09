@@ -260,7 +260,7 @@ async def task(req: TaskRequest, x_api_key: str = Header(...)):
     if x_api_key != RUNNER_API_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized")
     asyncio.create_task(_process_task(req))
-    print(f"[task] accepted chat_id={req.chat_id}")  # Safe: no content logged
+    print(f"[task] accepted")  # No PII in public logs
     return {"status": "accepted"}
 
 
@@ -325,14 +325,14 @@ async def _process_task(req: TaskRequest) -> None:
         reply = await run_copilot_sdk(prompt)
         await send_telegram(req.chat_id, reply)
         await post_callback(req.chat_id, reply)
-        print(f"[task] completed chat_id={req.chat_id}")
+        print(f"[task] completed")
         # Log to private repo
         await log_to_private_repo(
-            f"[tg] chat={req.chat_id}",
+            f"[tg] {datetime.now(timezone.utc).strftime('%H:%M')}",
             f"**User:** {req.text}\n\n**Assistant:** {reply}",
         )
     except Exception as e:
-        print(f"[task] error chat_id={req.chat_id} err={type(e).__name__}")
+        print(f"[task] error err={type(e).__name__}")
         await send_telegram(req.chat_id, f"Error: {e}")
 
 
