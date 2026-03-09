@@ -10,3 +10,5 @@ id = "7e07839c36d440959db434c2b77cd440"
 # RUNNER_API_KEY       - shared key with FastAPI
 # TELEGRAM_BOT_TOKEN   - for optional direct reply on error
 # ALLOWED_CHAT_ID      - Telegram chat whitelist
+# CALLBACK_TOKEN       - shared secret for runner callback auth (X-Secret header)
+# APPS_ORG             - GitHub org for app repo creation
