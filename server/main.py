@@ -114,10 +114,11 @@ async def send_telegram(chat_id: str, text: str) -> None:
             )
 
 
-async def run_copilot_sdk(prompt_text: str) -> str:
+async def run_copilot_sdk(prompt_text: str, extra_tools: list | None = None,
+                         system_prompt_override: str | None = None) -> str:
     """Run a single Copilot SDK session and return the reply."""
-    system_prompt = load_prompt()
-    tools = load_tools()
+    system_prompt = system_prompt_override or load_prompt()
+    tools = load_tools() + (extra_tools or [])
 
     async with await client.create_session({
         "model": MODEL,
@@ -574,7 +575,9 @@ Be concise but thorough.
 
 
 async def _process_implement(req: ImplementRequest, task_id: str) -> None:
-    """Clone repo, run AI, push changes."""
+    """Clone repo, run AI with full shell access, push changes."""
+    from server.shell_tools import create_shell_tools
+
     tmpdir = tempfile.mkdtemp(prefix="impl-")
     try:
         print(f"[implement] starting task_id={task_id} repo={req.repo} action={req.action}")
@@ -600,6 +603,9 @@ async def _process_implement(req: ImplementRequest, task_id: str) -> None:
             )
             await proc.communicate()
 
+        # Create shell/file tools scoped to this repo
+        shell_tools = create_shell_tools(tmpdir)
+
         # Build prompt based on action
         if req.action == "implement":
             prompt = await _build_implement_prompt(req, tmpdir)
@@ -610,14 +616,34 @@ async def _process_implement(req: ImplementRequest, task_id: str) -> None:
         else:
             raise ValueError(f"Unknown action: {req.action}")
 
-        # Run AI
-        reply = await run_copilot_sdk(prompt)
+        # Run AI with shell tools (full repo access)
+        system_prompt = (
+            "You are a software engineer with full shell access to a cloned git repository. "
+            "Use the provided tools (run_command, read_file, write_file, list_directory) to "
+            "explore the codebase, implement changes, run tests, and commit/push your work. "
+            "You have full autonomy — read files, write code, run commands, create branches, "
+            "commit, push, and create PRs using the gh CLI. Work carefully and verify your changes."
+        )
+        reply = await run_copilot_sdk(prompt, extra_tools=shell_tools,
+                                       system_prompt_override=system_prompt)
         print(f"[implement] AI done task_id={task_id} action={req.action}")
 
-        # Post-process based on action
+        # Post-process: check if AI already pushed/created PR, otherwise push ourselves
         if req.action in ("implement", "fix-pr"):
-            pushed = await _push_changes(req, tmpdir)
-            status_msg = "pushed" if pushed else "no changes"
+            # Check if AI already pushed
+            proc = await asyncio.create_subprocess_exec(
+                "git", "log", "--oneline", "-5",
+                cwd=tmpdir, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await proc.communicate()
+            has_commits = len(stdout.decode().strip().split("\n")) > 1
+
+            if has_commits:
+                pushed = await _push_changes(req, tmpdir)
+                status_msg = "pushed" if pushed else "AI may have pushed directly"
+            else:
+                status_msg = "no changes"
+
             await _notify_telegram(
                 req.notify_repo, req.notify_chat_id,
                 f"✅ {req.action} done for {req.repo} #{req.issue_number or req.pr_number} ({status_msg})",
