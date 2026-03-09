@@ -257,6 +257,18 @@ async def status():
     }
 
 
+@app.get("/debug")
+async def debug():
+    """Debug endpoint to check tool loading status."""
+    tools = load_tools()
+    tool_names = [getattr(t, "__name__", str(t)) for t in tools]
+    return {
+        "tool_count": len(tools),
+        "tool_names": tool_names,
+        "prompt_loaded": os.path.exists("prompt.md"),
+    }
+
+
 @app.post("/task")
 async def task(req: TaskRequest, x_api_key: str = Header(...)):
     if x_api_key != RUNNER_API_KEY:
