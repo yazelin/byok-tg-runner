@@ -1,0 +1,12 @@
+name = "byok-tg-runner-worker"
+main = "src/index.ts"
+compatibility_date = "2024-09-02"
+
+[[kv_namespaces]]
+binding = "RUNNER_KV"
+id = "PLACEHOLDER_REPLACE_DURING_SETUP"
+
+# Secrets (set via wrangler secret put):
+# RUNNER_API_KEY       - shared key with FastAPI
+# TELEGRAM_BOT_TOKEN   - for optional direct reply on error
+# ALLOWED_CHAT_ID      - Telegram chat whitelist
