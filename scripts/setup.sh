@@ -266,9 +266,9 @@ step "步驟 7／9：Deploy Cloudflare Worker"
 
 cd worker
 
-echo "$RUNNER_API_KEY"     | npx wrangler secret put RUNNER_API_KEY     --force 2>&1 | grep -v "WARNING\|update available"
-echo "$TELEGRAM_BOT_TOKEN" | npx wrangler secret put TELEGRAM_BOT_TOKEN --force 2>&1 | grep -v "WARNING\|update available"
-echo "$ALLOWED_CHAT_ID"    | npx wrangler secret put ALLOWED_CHAT_ID    --force 2>&1 | grep -v "WARNING\|update available"
+echo "$RUNNER_API_KEY"     | npx wrangler secret put RUNNER_API_KEY     2>&1 | grep -v "WARNING\|update available"
+echo "$TELEGRAM_BOT_TOKEN" | npx wrangler secret put TELEGRAM_BOT_TOKEN 2>&1 | grep -v "WARNING\|update available"
+echo "$ALLOWED_CHAT_ID"    | npx wrangler secret put ALLOWED_CHAT_ID    2>&1 | grep -v "WARNING\|update available"
 success "Wrangler secrets 已設定（RUNNER_API_KEY, TELEGRAM_BOT_TOKEN, ALLOWED_CHAT_ID）"
 
 info "部署 Worker..."
