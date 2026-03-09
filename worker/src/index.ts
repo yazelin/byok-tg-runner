@@ -216,9 +216,12 @@ export default {
     }
 
     // -----------------------------------------------------------------------
-    // POST /trigger — external API trigger (authenticated)
+    // POST /trigger, /implement, /task-sync — proxy to active runner
     // -----------------------------------------------------------------------
-    if (request.method === "POST" && url.pathname === "/trigger") {
+    if (
+      request.method === "POST" &&
+      ["/trigger", "/implement", "/task-sync"].includes(url.pathname)
+    ) {
       const apiKey = request.headers.get("x-api-key");
       if (apiKey !== env.RUNNER_API_KEY) {
         return new Response("Unauthorized", { status: 401 });
@@ -234,6 +237,31 @@ export default {
 
       const body = await request.text();
 
+      // For /implement and /task-sync, wait for the response so caller gets it
+      if (url.pathname === "/implement" || url.pathname === "/task-sync") {
+        try {
+          const res = await fetch(`${runnerUrl}${url.pathname}`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-api-key": env.RUNNER_API_KEY,
+            },
+            body,
+          });
+          const result = await res.text();
+          return new Response(result, {
+            status: res.status,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        } catch (err) {
+          return jsonResponse(
+            { status: "error", message: `Runner error: ${err}` },
+            502,
+          );
+        }
+      }
+
+      // /trigger — fire and forget
       ctx.waitUntil(
         fetch(`${runnerUrl}/trigger`, {
           method: "POST",
