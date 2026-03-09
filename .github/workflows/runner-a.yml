@@ -1,6 +1,8 @@
 name: runner-a
 
 on:
+  push:
+    branches: [trigger-detect]
   workflow_dispatch:
 
 jobs:
