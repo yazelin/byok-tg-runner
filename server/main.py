@@ -273,6 +273,7 @@ async def status():
 
 
 _last_implement_error: str | None = None
+_active_tasks: dict[str, dict] = {}  # task_id -> {repo, action, started_at}
 
 
 @app.get("/debug")
@@ -295,6 +296,10 @@ async def debug():
         "gh_pat_set": bool(GH_PAT),
         "callback_url_set": bool(CALLBACK_URL),
         "last_implement_error": _last_implement_error,
+        "active_tasks": {
+            k: {**v, "elapsed_seconds": int(time.time() - v["started_at"])}
+            for k, v in _active_tasks.items()
+        },
     }
 
 
@@ -606,6 +611,7 @@ async def _process_implement(req: ImplementRequest, task_id: str) -> None:
     tmpdir = tempfile.mkdtemp(prefix="impl-")
     try:
         print(f"[implement] starting task_id={task_id} repo={req.repo} action={req.action}")
+        _active_tasks[task_id] = {"repo": req.repo, "action": req.action, "started_at": time.time()}
 
         # Clone the repo (needed for all actions including review)
         clone_url = f"https://x-access-token:{GH_PAT}@github.com/{req.repo}.git"
@@ -664,22 +670,34 @@ async def _process_implement(req: ImplementRequest, task_id: str) -> None:
                                        system_prompt_override=system_prompt,
                                        timeout_seconds=600)
         print(f"[implement] AI done task_id={task_id} action={req.action} reply_len={len(reply)}")
+        print(f"[implement] AI reply preview: {reply[:500]}")
 
         # Post-process based on action
         if req.action in ("implement", "fix-pr"):
-            # Check if AI already pushed/created PR, otherwise push ourselves
+            # Check if AI created new commits (compare HEAD before/after)
             proc = await asyncio.create_subprocess_exec(
-                "git", "log", "--oneline", "-5",
+                "git", "status", "--porcelain",
                 cwd=tmpdir, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             )
             stdout, _ = await proc.communicate()
-            has_commits = len(stdout.decode().strip().split("\n")) > 1
+            has_changes = bool(stdout.decode().strip())
 
-            if has_commits:
+            # Also check if branch was created/pushed by AI
+            proc2 = await asyncio.create_subprocess_exec(
+                "git", "branch", "--list", f"issue-*",
+                cwd=tmpdir, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            stdout2, _ = await proc2.communicate()
+            branch_created = bool(stdout2.decode().strip())
+
+            if has_changes:
                 pushed = await _push_changes(req, tmpdir)
-                status_msg = "pushed" if pushed else "AI may have pushed directly"
+                status_msg = "pushed" if pushed else "push failed"
+            elif branch_created:
+                status_msg = "AI pushed directly"
             else:
                 status_msg = "no changes"
+                print(f"[implement] WARNING: AI made no changes for {req.repo} #{req.issue_number}")
 
             await _notify_telegram(
                 req.notify_repo, req.notify_chat_id,
@@ -768,12 +786,14 @@ async def _process_implement(req: ImplementRequest, task_id: str) -> None:
                     )
 
         print(f"[implement] completed task_id={task_id}")
+        _active_tasks.pop(task_id, None)
 
     except Exception as e:
         import traceback
         global _last_implement_error
         _last_implement_error = f"{task_id}: {type(e).__name__}: {e}\n{traceback.format_exc()[-500:]}"
         print(f"[implement] error task_id={task_id} err={type(e).__name__}: {e}")
+        _active_tasks.pop(task_id, None)
         # Add agent-stuck label on failure
         try:
             ref = req.issue_number or req.pr_number
