@@ -48,6 +48,11 @@ jobs:
           FOUNDRY_API_KEY: ${{ secrets.FOUNDRY_API_KEY }}
           LOG_REPO: yazelin/byok-tg-main
           GH_TOKEN: ${{ secrets.GH_PAT }}
+          CALLBACK_URL: ${{ secrets.CALLBACK_URL }}
+          CALLBACK_TOKEN: ${{ secrets.CALLBACK_TOKEN }}
+          APPS_ORG: ${{ secrets.APPS_ORG }}
+          NOTIFY_REPO: yazelin/byok-tg-main
+          NOTIFY_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
       - name: Wait for server to start
         run: sleep 5
