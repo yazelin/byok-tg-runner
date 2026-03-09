@@ -541,70 +541,59 @@ INSTRUCTIONS:
 
 
 async def _build_review_prompt(req: ImplementRequest, tmpdir: str) -> str:
-    """Build prompt for reviewing a PR."""
-    diff = await _read_gh_output(
-        "gh", "pr", "diff", str(req.pr_number), "--repo", req.repo,
-    )
-    # Truncate large diffs
-    if len(diff) > 10000:
-        diff = diff[:10000] + "\n... (truncated)"
+    """Build prompt for reviewing a PR — full access like original."""
+    agents_md = ""
+    agents_path = os.path.join(tmpdir, "AGENTS.md")
+    if os.path.exists(agents_path):
+        with open(agents_path) as f:
+            agents_md = f.read()
 
-    pr_body = await _read_gh_output(
-        "gh", "pr", "view", str(req.pr_number),
-        "--repo", req.repo,
-        "--json", "body", "--jq", ".body",
-    )
+    prompt = f"""You are a strict code reviewer for repository {req.repo}.
+You are working in a cloned repo at {tmpdir}.
+"""
+    if agents_md:
+        prompt += f"""
+AGENTS.md (project conventions):
+{agents_md}
+"""
+    prompt += f"""
+Review PR #{req.pr_number}:
+1. Run: gh pr diff {req.pr_number} --repo {req.repo}
+2. Find the linked issue number from the PR body (Closes #N)
+3. Read the issue: gh issue view N --repo {req.repo}
+4. Check each item in the Acceptance Criteria section (if present)
+5. Check code quality: no dead code, no hardcoded values, proper error handling
+6. Browser smoke test (if index.html exists):
+   - Run: python3 -m http.server 8000 &
+   - Write a small Playwright script (JavaScript) that navigates to http://localhost:8000,
+     waits 3 seconds, and collects any console errors
+   - Run it with: node your_script.js (Playwright Chromium is pre-installed)
+   - If any console errors are found, this is a blocking issue — REQUEST CHANGES
+   - Kill the server when done: kill %1
 
-    prompt = f"""You are reviewing PR #{req.pr_number} in repo {req.repo}.
+You MUST take exactly one action before finishing:
 
-PR DESCRIPTION:
-{pr_body}
+APPROVE (all criteria met, code is clean):
+  gh pr review {req.pr_number} --repo {req.repo} --approve -b 'All acceptance criteria verified: [list checked items]'
+  gh pr merge {req.pr_number} --repo {req.repo} --squash --delete-branch
 
-PR DIFF:
-{diff}
+REQUEST CHANGES (any criterion not met):
+  gh pr review {req.pr_number} --repo {req.repo} --request-changes -b 'Issues found: [list specific problems with file:line references]'
 
-INSTRUCTIONS:
-Review this PR for correctness, code quality, and potential issues.
-Respond with EXACTLY one of:
-- "APPROVE: <brief explanation>" if the PR looks good
-- "REQUEST_CHANGES: <detailed explanation of what needs to be fixed>"
-
-Be concise but thorough.
+IMPORTANT: You must run one of the above gh commands. Never finish without taking action.
 """
     return prompt
 
 
 async def _process_implement(req: ImplementRequest, task_id: str) -> None:
     """Clone repo, run AI with full shell access, push changes."""
+    from server.shell_tools import create_shell_tools
+
     tmpdir = tempfile.mkdtemp(prefix="impl-")
     try:
         print(f"[implement] starting task_id={task_id} repo={req.repo} action={req.action}")
 
-        # Review doesn't need clone or shell tools — just read diff and judge
-        if req.action == "review":
-            prompt = await _build_review_prompt(req, tmpdir)
-            reply = await run_copilot_sdk(
-                prompt,
-                system_prompt_override=(
-                    "You are a code reviewer. Review the PR diff and respond with EXACTLY one of:\n"
-                    "- \"APPROVE: <brief explanation>\" if the PR looks good\n"
-                    "- \"REQUEST_CHANGES: <detailed explanation>\" if changes are needed\n"
-                    "Your entire response must start with either APPROVE or REQUEST_CHANGES."
-                ),
-            )
-            print(f"[implement] review AI done task_id={task_id} reply_preview={reply[:100]}")
-            await _submit_review(req, reply)
-            await _notify_telegram(
-                req.notify_repo, req.notify_chat_id,
-                f"✅ review done for {req.repo} PR #{req.pr_number}",
-            )
-            print(f"[implement] completed task_id={task_id}")
-            return
-
-        # implement / fix-pr: need clone + shell tools
-        from server.shell_tools import create_shell_tools
-
-        # Clone the repo
+        # Clone the repo (needed for all actions including review)
         clone_url = f"https://x-access-token:{GH_PAT}@github.com/{req.repo}.git"
         proc = await asyncio.create_subprocess_exec(
             "git", "clone", clone_url, tmpdir,
@@ -633,39 +622,90 @@ async def _process_implement(req: ImplementRequest, task_id: str) -> None:
             prompt = await _build_implement_prompt(req, tmpdir)
         elif req.action == "fix-pr":
             prompt = await _build_fix_pr_prompt(req, tmpdir)
+        elif req.action == "review":
+            prompt = await _build_review_prompt(req, tmpdir)
         else:
             raise ValueError(f"Unknown action: {req.action}")
 
-        # Run AI with shell tools (full repo access)
-        system_prompt = (
-            "You are a software engineer with full shell access to a cloned git repository. "
-            "Use the provided tools (run_command, read_file, write_file, list_directory) to "
-            "explore the codebase, implement changes, run tests, and commit/push your work. "
-            "You have full autonomy — read files, write code, run commands, create branches, "
-            "commit, push, and create PRs using the gh CLI. Work carefully and verify your changes."
-        )
+        # System prompt
+        if req.action == "review":
+            system_prompt = (
+                "You are a strict code reviewer with full shell access to a cloned git repository. "
+                "Use the provided tools (run_command, read_file, write_file, list_directory) to "
+                "explore the codebase, read files, run tests, and perform browser smoke tests. "
+                "You MUST take action by running gh pr review and optionally gh pr merge. "
+                "Never finish without submitting a review via gh CLI."
+            )
+        else:
+            system_prompt = (
+                "You are a software engineer with full shell access to a cloned git repository. "
+                "Use the provided tools (run_command, read_file, write_file, list_directory) to "
+                "explore the codebase, implement changes, run tests, and commit/push your work. "
+                "You have full autonomy — read files, write code, run commands, create branches, "
+                "commit, push, and create PRs using the gh CLI. Work carefully and verify your changes."
+            )
+
         reply = await run_copilot_sdk(prompt, extra_tools=shell_tools,
                                        system_prompt_override=system_prompt)
         print(f"[implement] AI done task_id={task_id} action={req.action}")
 
-        # Post-process: check if AI already pushed/created PR, otherwise push ourselves
-        proc = await asyncio.create_subprocess_exec(
-            "git", "log", "--oneline", "-5",
-            cwd=tmpdir, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await proc.communicate()
-        has_commits = len(stdout.decode().strip().split("\n")) > 1
+        # Post-process based on action
+        if req.action in ("implement", "fix-pr"):
+            # Check if AI already pushed/created PR, otherwise push ourselves
+            proc = await asyncio.create_subprocess_exec(
+                "git", "log", "--oneline", "-5",
+                cwd=tmpdir, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await proc.communicate()
+            has_commits = len(stdout.decode().strip().split("\n")) > 1
 
-        if has_commits:
-            pushed = await _push_changes(req, tmpdir)
-            status_msg = "pushed" if pushed else "AI may have pushed directly"
-        else:
-            status_msg = "no changes"
+            if has_commits:
+                pushed = await _push_changes(req, tmpdir)
+                status_msg = "pushed" if pushed else "AI may have pushed directly"
+            else:
+                status_msg = "no changes"
 
-        await _notify_telegram(
-            req.notify_repo, req.notify_chat_id,
-            f"✅ {req.action} done for {req.repo} #{req.issue_number or req.pr_number} ({status_msg})",
-        )
+            await _notify_telegram(
+                req.notify_repo, req.notify_chat_id,
+                f"✅ {req.action} done for {req.repo} #{req.issue_number or req.pr_number} ({status_msg})",
+            )
+
+        elif req.action == "review":
+            # Fallback: if AI didn't take action, auto-merge
+            pr_state = await _read_gh_output(
+                "gh", "pr", "view", str(req.pr_number),
+                "--repo", req.repo, "--json", "state", "--jq", ".state",
+            )
+            if pr_state == "OPEN":
+                reviews = await _read_gh_output(
+                    "gh", "api", f"repos/{req.repo}/pulls/{req.pr_number}/reviews",
+                    "--jq", '[.[] | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")] | length',
+                )
+                if reviews == "0":
+                    print(f"[implement] review fallback: AI took no action, auto-merging PR #{req.pr_number}")
+                    await _read_gh_output(
+                        "gh", "pr", "merge", str(req.pr_number),
+                        "--repo", req.repo, "--squash", "--delete-branch",
+                    )
+                    await _notify_telegram(
+                        req.notify_repo, req.notify_chat_id,
+                        f"🔀 auto-merged {req.repo} PR #{req.pr_number} (review took no action)",
+                    )
+                else:
+                    await _notify_telegram(
+                        req.notify_repo, req.notify_chat_id,
+                        f"✅ review done for {req.repo} PR #{req.pr_number}",
+                    )
+            elif pr_state == "MERGED":
+                await _notify_telegram(
+                    req.notify_repo, req.notify_chat_id,
+                    f"🔀 {req.repo} PR #{req.pr_number} merged",
+                )
+            else:
+                await _notify_telegram(
+                    req.notify_repo, req.notify_chat_id,
+                    f"✅ review done for {req.repo} PR #{req.pr_number} (state: {pr_state})",
+                )
 
         print(f"[implement] completed task_id={task_id}")
 
