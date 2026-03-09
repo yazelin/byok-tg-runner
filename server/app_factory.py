@@ -78,6 +78,23 @@ async def setup_repo(repo: str, files: list[dict]) -> dict:
             with open(fpath, "w") as fh:
                 fh.write(f["content"])
 
+        # Auto-inject workflow templates (overwrite any AI-generated ones)
+        notify_repo = os.environ.get("NOTIFY_REPO", "yazelin/byok-tg-main")
+        notify_chat_id = os.environ.get("NOTIFY_CHAT_ID", "")
+        templates_dir = os.path.join(os.path.dirname(__file__), "..", "templates", "workflows")
+        if os.path.isdir(templates_dir):
+            wf_dir = os.path.join(tmpdir, ".github", "workflows")
+            os.makedirs(wf_dir, exist_ok=True)
+            for tmpl_name in os.listdir(templates_dir):
+                if not tmpl_name.endswith(".yml"):
+                    continue
+                with open(os.path.join(templates_dir, tmpl_name)) as tf:
+                    content = tf.read()
+                content = content.replace("PLACEHOLDER_NOTIFY_REPO", notify_repo)
+                content = content.replace("PLACEHOLDER_CHAT_ID", notify_chat_id)
+                with open(os.path.join(wf_dir, tmpl_name), "w") as wf:
+                    wf.write(content)
+
         # Set remote URL with PAT
         await _run(
             ["git", "remote", "set-url", "origin", clone_url],
