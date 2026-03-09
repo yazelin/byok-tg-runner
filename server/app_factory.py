@@ -224,8 +224,8 @@ async def setup_secrets(repo: str) -> dict:
         notify_chat_id = os.environ.get("NOTIFY_CHAT_ID", "")
         notify_repo = os.environ.get("NOTIFY_REPO", "yazelin/byok-tg-main")
 
-        # Derive RUNNER_URL from CALLBACK_URL (strip /api/callback suffix)
-        runner_url = callback_url
+        # Use CALLBACK_URL as worker base (strip /api/callback suffix)
+        runner_url = os.environ.get("RUNNER_URL", callback_url)
         if runner_url.endswith("/api/callback"):
             runner_url = runner_url[: -len("/api/callback")]
 

@@ -53,6 +53,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_PAT }}
           CALLBACK_URL: ${{ secrets.CALLBACK_URL }}
           CALLBACK_TOKEN: ${{ secrets.CALLBACK_TOKEN }}
+          RUNNER_URL: ${{ secrets.WORKER_URL }}
           APPS_ORG: ${{ secrets.APPS_ORG }}
           NOTIFY_REPO: yazelin/byok-tg-main
           NOTIFY_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
