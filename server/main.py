@@ -115,7 +115,8 @@ async def send_telegram(chat_id: str, text: str) -> None:
 
 
 async def run_copilot_sdk(prompt_text: str, extra_tools: list | None = None,
-                         system_prompt_override: str | None = None) -> str:
+                         system_prompt_override: str | None = None,
+                         timeout_seconds: int = 300) -> str:
     """Run a single Copilot SDK session and return the reply."""
     system_prompt = system_prompt_override or load_prompt()
     tools = load_tools() + (extra_tools or [])
@@ -133,19 +134,32 @@ async def run_copilot_sdk(prompt_text: str, extra_tools: list | None = None,
     }) as session:
         done = asyncio.Event()
         reply_parts = []
+        tool_calls = []
 
         def on_event(event):
             t = event.type.value
             if t == "assistant.message":
                 reply_parts.append(event.data.content or "")
+            elif t == "tool.calling":
+                tool_name = getattr(event.data, "name", "?")
+                tool_calls.append(tool_name)
+                print(f"[sdk] tool call: {tool_name}")
             elif t == "session.idle":
+                done.set()
+            elif t == "error":
+                print(f"[sdk] error event: {event.data}")
                 done.set()
 
         session.on(on_event)
         full_prompt = f"{system_prompt}\n\n{prompt_text}"
         await session.send({"prompt": full_prompt})
-        await done.wait()
+        try:
+            await asyncio.wait_for(done.wait(), timeout=timeout_seconds)
+        except asyncio.TimeoutError:
+            print(f"[sdk] session timed out after {timeout_seconds}s, tool_calls={tool_calls}")
+            raise RuntimeError(f"Copilot SDK session timed out after {timeout_seconds}s")
 
+    print(f"[sdk] session done, {len(reply_parts)} replies, {len(tool_calls)} tool calls")
     return "\n".join(reply_parts) or "(no response)"
 
 
@@ -645,9 +659,11 @@ async def _process_implement(req: ImplementRequest, task_id: str) -> None:
                 "commit, push, and create PRs using the gh CLI. Work carefully and verify your changes."
             )
 
+        print(f"[implement] sending to Copilot SDK task_id={task_id}")
         reply = await run_copilot_sdk(prompt, extra_tools=shell_tools,
-                                       system_prompt_override=system_prompt)
-        print(f"[implement] AI done task_id={task_id} action={req.action}")
+                                       system_prompt_override=system_prompt,
+                                       timeout_seconds=600)
+        print(f"[implement] AI done task_id={task_id} action={req.action} reply_len={len(reply)}")
 
         # Post-process based on action
         if req.action in ("implement", "fix-pr"):
