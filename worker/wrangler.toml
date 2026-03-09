@@ -4,7 +4,7 @@ compatibility_date = "2024-09-02"
 
 [[kv_namespaces]]
 binding = "RUNNER_KV"
-id = "PLACEHOLDER_REPLACE_DURING_SETUP"
+id = "98f793027a344ac4a1309bf8655c1c9f"
 
 # Secrets (set via wrangler secret put):
 # RUNNER_API_KEY       - shared key with FastAPI

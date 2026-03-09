@@ -151,13 +151,24 @@ CF_ACCOUNT_ID=$(cd worker && npx wrangler whoami 2>&1 | grep -oE '[0-9a-f]{32}' 
 success "Cloudflare Account ID：$CF_ACCOUNT_ID"
 
 # 建立或複用 KV namespace
-info "建立 KV namespace RUNNER_KV..."
-KV_OUTPUT=$(cd worker && npx wrangler kv namespace create "RUNNER_KV" 2>&1 || true)
-if echo "$KV_OUTPUT" | grep -q "already exists\|A namespace with this name already exists"; then
-  # 取得現有的 ID
-  KV_NAMESPACE_ID=$(cd worker && npx wrangler kv namespace list 2>&1 | grep -A1 '"RUNNER_KV"' | grep -oE '"id":"[^"]+"' | head -1 | grep -oE '[0-9a-f]{32}')
-  warn "KV namespace RUNNER_KV 已存在，ID：$KV_NAMESPACE_ID"
+info "檢查 KV namespace RUNNER_KV..."
+WORKER_NAME=$(grep '^name' worker/wrangler.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+EXISTING_KV_ID=$(cd worker && npx wrangler kv namespace list 2>&1 | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    for ns in data:
+        if ns.get('title','').endswith('-RUNNER_KV'):
+            print(ns['id']); break
+except: pass
+" 2>/dev/null)
+
+if [[ -n "$EXISTING_KV_ID" ]]; then
+  KV_NAMESPACE_ID="$EXISTING_KV_ID"
+  warn "KV namespace 已存在，ID：$KV_NAMESPACE_ID"
 else
+  info "建立 KV namespace..."
+  KV_OUTPUT=$(cd worker && npx wrangler kv namespace create "RUNNER_KV" 2>&1 || true)
   KV_NAMESPACE_ID=$(echo "$KV_OUTPUT" | grep -oE '[0-9a-f]{32}' | tail -1)
   success "KV namespace 已建立，ID：$KV_NAMESPACE_ID"
 fi
