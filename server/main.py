@@ -274,6 +274,7 @@ async def status():
 
 _last_implement_error: str | None = None
 _active_tasks: dict[str, dict] = {}  # task_id -> {repo, action, started_at}
+_repo_locks: dict[str, str] = {}  # repo -> task_id (prevent duplicate tasks)
 
 
 @app.get("/debug")
@@ -608,6 +609,14 @@ async def _process_implement(req: ImplementRequest, task_id: str) -> None:
     """Clone repo, run AI with full shell access, push changes."""
     from server.shell_tools import create_shell_tools
 
+    # Dedup: skip if another task is already running for same repo+action
+    lock_key = f"{req.repo}:{req.action}"
+    existing = _repo_locks.get(lock_key)
+    if existing and existing in _active_tasks:
+        print(f"[implement] skipping {task_id}, already running {existing} for {lock_key}")
+        return
+    _repo_locks[lock_key] = task_id
+
     tmpdir = tempfile.mkdtemp(prefix="impl-")
     try:
         print(f"[implement] starting task_id={task_id} repo={req.repo} action={req.action}")
@@ -787,6 +796,7 @@ async def _process_implement(req: ImplementRequest, task_id: str) -> None:
 
         print(f"[implement] completed task_id={task_id}")
         _active_tasks.pop(task_id, None)
+        _repo_locks.pop(lock_key, None)
 
     except Exception as e:
         import traceback
@@ -794,6 +804,51 @@ async def _process_implement(req: ImplementRequest, task_id: str) -> None:
         _last_implement_error = f"{task_id}: {type(e).__name__}: {e}\n{traceback.format_exc()[-500:]}"
         print(f"[implement] error task_id={task_id} err={type(e).__name__}: {e}")
         _active_tasks.pop(task_id, None)
+        _repo_locks.pop(lock_key, None)
+
+        # On review timeout, do auto-merge fallback
+        if req.action == "review" and isinstance(e, RuntimeError) and "timed out" in str(e):
+            try:
+                pr_state = await _read_gh_output(
+                    "gh", "pr", "view", str(req.pr_number),
+                    "--repo", req.repo, "--json", "state", "--jq", ".state",
+                )
+                if pr_state == "OPEN":
+                    print(f"[implement] review timed out, auto-merging PR #{req.pr_number}")
+                    await _read_gh_output(
+                        "gh", "pr", "merge", str(req.pr_number),
+                        "--repo", req.repo, "--squash", "--delete-branch",
+                    )
+                    await _notify_telegram(
+                        req.notify_repo, req.notify_chat_id,
+                        f"🔀 auto-merged {req.repo} PR #{req.pr_number} (review timed out)",
+                    )
+                    # Dispatch next issue
+                    next_issue = await _read_gh_output(
+                        "gh", "issue", "list", "--repo", req.repo,
+                        "--state", "open", "--label", "copilot-task",
+                        "--json", "number,labels",
+                        "--jq", '[.[] | select(.labels | map(.name) | (contains(["agent-stuck"]) or contains(["needs-human-review"])) | not)] | sort_by(.number) | .[0].number',
+                    )
+                    if next_issue and next_issue.isdigit():
+                        next_req = ImplementRequest(
+                            repo=req.repo, action="implement",
+                            issue_number=int(next_issue),
+                            notify_repo=req.notify_repo,
+                            notify_chat_id=req.notify_chat_id,
+                        )
+                        asyncio.create_task(
+                            _process_implement(next_req, f"impl-{int(time.time())}")
+                        )
+                    else:
+                        await _notify_telegram(
+                            req.notify_repo, req.notify_chat_id,
+                            f"✅ {req.repo} all issues completed!",
+                        )
+                    return  # Skip the error handling below
+            except Exception:
+                pass  # Fall through to normal error handling
+
         # Add agent-stuck label on failure
         try:
             ref = req.issue_number or req.pr_number
