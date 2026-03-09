@@ -576,11 +576,33 @@ Be concise but thorough.
 
 async def _process_implement(req: ImplementRequest, task_id: str) -> None:
     """Clone repo, run AI with full shell access, push changes."""
-    from server.shell_tools import create_shell_tools
-
     tmpdir = tempfile.mkdtemp(prefix="impl-")
     try:
         print(f"[implement] starting task_id={task_id} repo={req.repo} action={req.action}")
+
+        # Review doesn't need clone or shell tools — just read diff and judge
+        if req.action == "review":
+            prompt = await _build_review_prompt(req, tmpdir)
+            reply = await run_copilot_sdk(
+                prompt,
+                system_prompt_override=(
+                    "You are a code reviewer. Review the PR diff and respond with EXACTLY one of:\n"
+                    "- \"APPROVE: <brief explanation>\" if the PR looks good\n"
+                    "- \"REQUEST_CHANGES: <detailed explanation>\" if changes are needed\n"
+                    "Your entire response must start with either APPROVE or REQUEST_CHANGES."
+                ),
+            )
+            print(f"[implement] review AI done task_id={task_id} reply_preview={reply[:100]}")
+            await _submit_review(req, reply)
+            await _notify_telegram(
+                req.notify_repo, req.notify_chat_id,
+                f"✅ review done for {req.repo} PR #{req.pr_number}",
+            )
+            print(f"[implement] completed task_id={task_id}")
+            return
+
+        # implement / fix-pr: need clone + shell tools
+        from server.shell_tools import create_shell_tools
 
         # Clone the repo
         clone_url = f"https://x-access-token:{GH_PAT}@github.com/{req.repo}.git"
@@ -611,8 +633,6 @@ async def _process_implement(req: ImplementRequest, task_id: str) -> None:
             prompt = await _build_implement_prompt(req, tmpdir)
         elif req.action == "fix-pr":
             prompt = await _build_fix_pr_prompt(req, tmpdir)
-        elif req.action == "review":
-            prompt = await _build_review_prompt(req, tmpdir)
         else:
             raise ValueError(f"Unknown action: {req.action}")
 
@@ -629,31 +649,23 @@ async def _process_implement(req: ImplementRequest, task_id: str) -> None:
         print(f"[implement] AI done task_id={task_id} action={req.action}")
 
         # Post-process: check if AI already pushed/created PR, otherwise push ourselves
-        if req.action in ("implement", "fix-pr"):
-            # Check if AI already pushed
-            proc = await asyncio.create_subprocess_exec(
-                "git", "log", "--oneline", "-5",
-                cwd=tmpdir, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, _ = await proc.communicate()
-            has_commits = len(stdout.decode().strip().split("\n")) > 1
+        proc = await asyncio.create_subprocess_exec(
+            "git", "log", "--oneline", "-5",
+            cwd=tmpdir, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        has_commits = len(stdout.decode().strip().split("\n")) > 1
 
-            if has_commits:
-                pushed = await _push_changes(req, tmpdir)
-                status_msg = "pushed" if pushed else "AI may have pushed directly"
-            else:
-                status_msg = "no changes"
+        if has_commits:
+            pushed = await _push_changes(req, tmpdir)
+            status_msg = "pushed" if pushed else "AI may have pushed directly"
+        else:
+            status_msg = "no changes"
 
-            await _notify_telegram(
-                req.notify_repo, req.notify_chat_id,
-                f"✅ {req.action} done for {req.repo} #{req.issue_number or req.pr_number} ({status_msg})",
-            )
-        elif req.action == "review":
-            await _submit_review(req, reply)
-            await _notify_telegram(
-                req.notify_repo, req.notify_chat_id,
-                f"✅ review done for {req.repo} PR #{req.pr_number}",
-            )
+        await _notify_telegram(
+            req.notify_repo, req.notify_chat_id,
+            f"✅ {req.action} done for {req.repo} #{req.issue_number or req.pr_number} ({status_msg})",
+        )
 
         print(f"[implement] completed task_id={task_id}")
 
