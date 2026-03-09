@@ -257,6 +257,9 @@ async def status():
     }
 
 
+_last_implement_error: str | None = None
+
+
 @app.get("/debug")
 async def debug():
     """Debug endpoint to check tool loading status."""
@@ -274,6 +277,9 @@ async def debug():
         "tool_names": tool_names,
         "prompt_loaded": os.path.exists("prompt.md"),
         "error": error,
+        "gh_pat_set": bool(GH_PAT),
+        "callback_url_set": bool(CALLBACK_URL),
+        "last_implement_error": _last_implement_error,
     }
 
 
@@ -626,6 +632,9 @@ async def _process_implement(req: ImplementRequest, task_id: str) -> None:
         print(f"[implement] completed task_id={task_id}")
 
     except Exception as e:
+        import traceback
+        global _last_implement_error
+        _last_implement_error = f"{task_id}: {type(e).__name__}: {e}\n{traceback.format_exc()[-500:]}"
         print(f"[implement] error task_id={task_id} err={type(e).__name__}: {e}")
         # Add agent-stuck label on failure
         try:
@@ -637,9 +646,10 @@ async def _process_implement(req: ImplementRequest, task_id: str) -> None:
                 )
         except Exception:
             pass
-        await _notify_telegram(
-            req.notify_repo, req.notify_chat_id,
-            f"❌ {req.action} failed for {req.repo} #{req.issue_number or req.pr_number}: {e}",
-        )
+        # Send error directly via Telegram (bypass notify.yml which may also fail)
+        err_msg = f"❌ {req.action} failed for {req.repo} #{req.issue_number or req.pr_number}: {e}"
+        if req.notify_chat_id:
+            await send_telegram(req.notify_chat_id, err_msg)
+        await _notify_telegram(req.notify_repo, req.notify_chat_id, err_msg)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
