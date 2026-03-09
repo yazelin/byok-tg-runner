@@ -371,10 +371,12 @@ async def _process_task(req: TaskRequest) -> None:
             except (json.JSONDecodeError, TypeError):
                 pass  # Ignore malformed history
 
-        reply = await run_copilot_sdk(prompt)
+        # Longer timeout for app creation (many tool calls)
+        timeout = 600 if req.command == "app" else 300
+        reply = await run_copilot_sdk(prompt, timeout_seconds=timeout)
         await send_telegram(req.chat_id, reply)
         await post_callback(req.chat_id, reply)
-        print(f"[task] completed")
+        print(f"[task] completed cmd={req.command}")
         # Log to private repo
         await log_to_private_repo(
             f"[tg] {datetime.now(timezone.utc).strftime('%H:%M')}",
