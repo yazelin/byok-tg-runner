@@ -1,0 +1,61 @@
+name: Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.head_ref != 'main'
+    steps:
+      - name: Count previous reviews
+        id: count
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          PR_NUM=${{ github.event.pull_request.number }}
+          COUNT=$(gh api repos/${{ github.repository }}/pulls/${PR_NUM}/reviews --jq 'length')
+          echo "review_count=${COUNT}" >> "$GITHUB_OUTPUT"
+
+      - name: Bail if too many reviews
+        if: steps.count.outputs.review_count >= 3
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          NOTIFY_REPO: PLACEHOLDER_NOTIFY_REPO
+          NOTIFY_CHAT_ID: PLACEHOLDER_CHAT_ID
+        run: |
+          PR_NUM=${{ github.event.pull_request.number }}
+          ISSUE_NUM=$(gh pr view ${PR_NUM} --json body --jq '.body' | grep -oP 'Closes #\K\d+' || echo "")
+          [ -n "$ISSUE_NUM" ] && gh issue edit ${ISSUE_NUM} --add-label needs-human-review
+          gh pr close ${PR_NUM} --comment "Closing: exceeded review limit (3)"
+          gh workflow run notify.yml --repo "$NOTIFY_REPO" \
+            -f chat_id="$NOTIFY_CHAT_ID" \
+            -f text="⚠️ ${{ github.repository }} PR #${PR_NUM} needs human review" || true
+
+      - name: Dispatch review to runner
+        if: steps.count.outputs.review_count < 3
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          RUNNER_URL: ${{ secrets.RUNNER_URL }}
+          RUNNER_API_KEY: ${{ secrets.RUNNER_API_KEY }}
+          NOTIFY_REPO: PLACEHOLDER_NOTIFY_REPO
+          NOTIFY_CHAT_ID: PLACEHOLDER_CHAT_ID
+        run: |
+          PR_NUM=${{ github.event.pull_request.number }}
+          echo "Dispatching review for PR #$PR_NUM"
+          curl -sf -X POST "$RUNNER_URL/implement" \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: $RUNNER_API_KEY" \
+            -d "{
+              \"repo\": \"${{ github.repository }}\",
+              \"action\": \"review\",
+              \"pr_number\": $PR_NUM,
+              \"notify_repo\": \"$NOTIFY_REPO\",
+              \"notify_chat_id\": \"$NOTIFY_CHAT_ID\"
+            }"

@@ -1,0 +1,85 @@
+name: Implement Issue
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [closed]
+  pull_request_review:
+    types: [submitted]
+
+concurrency:
+  group: ai-implement
+  cancel-in-progress: false
+
+jobs:
+  implement:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.merged == true &&
+       github.event.pull_request.head.ref != 'main') ||
+      (github.event_name == 'pull_request_review' &&
+       github.event.review.state == 'changes_requested' &&
+       github.event.pull_request.head.ref != 'main')
+    steps:
+      - name: Check state and dispatch to runner
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RUNNER_URL: ${{ secrets.RUNNER_URL }}
+          RUNNER_API_KEY: ${{ secrets.RUNNER_API_KEY }}
+          NOTIFY_REPO: PLACEHOLDER_NOTIFY_REPO
+          NOTIFY_CHAT_ID: PLACEHOLDER_CHAT_ID
+        run: |
+          # CASE A: Open PR with changes requested?
+          PR_JSON=$(gh pr list --state open --json number,headRefName,reviewDecision --jq '.[0]')
+
+          if [ -n "$PR_JSON" ] && [ "$PR_JSON" != "null" ]; then
+            PR_NUM=$(echo "$PR_JSON" | jq -r '.number')
+            DECISION=$(echo "$PR_JSON" | jq -r '.reviewDecision')
+            if [ "$DECISION" = "CHANGES_REQUESTED" ]; then
+              echo "Dispatching fix-pr for PR #$PR_NUM"
+              curl -sf -X POST "$RUNNER_URL/implement" \
+                -H "Content-Type: application/json" \
+                -H "x-api-key: $RUNNER_API_KEY" \
+                -d "{
+                  \"repo\": \"$GH_REPO\",
+                  \"action\": \"fix-pr\",
+                  \"pr_number\": $PR_NUM,
+                  \"notify_repo\": \"$NOTIFY_REPO\",
+                  \"notify_chat_id\": \"$NOTIFY_CHAT_ID\"
+                }"
+              exit 0
+            fi
+            echo "PR exists but decision=$DECISION, skipping"
+            exit 0
+          fi
+
+          # CASE B: Open issue with copilot-task label?
+          ISSUE_JSON=$(gh issue list --state open --label copilot-task --json number,title,labels \
+            --jq '[.[] | select(.labels | map(.name) | (contains(["agent-stuck"]) or contains(["needs-human-review"])) | not)] | sort_by(.number) | .[0]')
+
+          if [ -n "$ISSUE_JSON" ] && [ "$ISSUE_JSON" != "null" ]; then
+            ISSUE_NUM=$(echo "$ISSUE_JSON" | jq -r '.number')
+            echo "Dispatching implement for issue #$ISSUE_NUM"
+            curl -sf -X POST "$RUNNER_URL/implement" \
+              -H "Content-Type: application/json" \
+              -H "x-api-key: $RUNNER_API_KEY" \
+              -d "{
+                \"repo\": \"$GH_REPO\",
+                \"action\": \"implement\",
+                \"issue_number\": $ISSUE_NUM,
+                \"notify_repo\": \"$NOTIFY_REPO\",
+                \"notify_chat_id\": \"$NOTIFY_CHAT_ID\"
+              }"
+            exit 0
+          fi
+
+          # CASE C: All done
+          echo "No actionable issues or PRs"
+          GH_TOKEN="${{ secrets.GH_TOKEN }}" gh workflow run notify.yml \
+            --repo "$NOTIFY_REPO" \
+            -f chat_id="$NOTIFY_CHAT_ID" \
+            -f text="✅ $GH_REPO all issues completed!" || true
