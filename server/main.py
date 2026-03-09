@@ -260,12 +260,20 @@ async def status():
 @app.get("/debug")
 async def debug():
     """Debug endpoint to check tool loading status."""
-    tools = load_tools()
+    error = None
+    tools = []
+    try:
+        from tools import ALL_TOOLS
+        tools = ALL_TOOLS
+    except Exception as e:
+        import traceback
+        error = f"{type(e).__name__}: {e}\n{traceback.format_exc()}"
     tool_names = [getattr(t, "__name__", str(t)) for t in tools]
     return {
         "tool_count": len(tools),
         "tool_names": tool_names,
         "prompt_loaded": os.path.exists("prompt.md"),
+        "error": error,
     }
 
 
