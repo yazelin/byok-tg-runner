@@ -147,11 +147,7 @@ if ! (cd worker && npx wrangler whoami 2>&1 | grep -q "logged in\|OAuth Token");
   (cd worker && npx wrangler login)
 fi
 
-CF_ACCOUNT_ID=$(cd worker && npx wrangler whoami 2>&1 | grep -oP '(?<=Account ID\s{0,30}\│\s)[\w]+' | head -1)
-if [[ -z "$CF_ACCOUNT_ID" ]]; then
-  # fallback: parse differently
-  CF_ACCOUNT_ID=$(cd worker && npx wrangler whoami 2>&1 | grep -oE '[0-9a-f]{32}' | head -1)
-fi
+CF_ACCOUNT_ID=$(cd worker && npx wrangler whoami 2>&1 | grep -oE '[0-9a-f]{32}' | head -1)
 success "Cloudflare Account ID：$CF_ACCOUNT_ID"
 
 # 建立或複用 KV namespace
