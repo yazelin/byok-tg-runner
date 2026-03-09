@@ -138,7 +138,7 @@ async function getActiveRunner(env: Env): Promise<string | null> {
   for (const r of results) {
     if (r) return r;
   }
-  return urls[0];
+  return null;
 }
 
 // ---------------------------------------------------------------------------
