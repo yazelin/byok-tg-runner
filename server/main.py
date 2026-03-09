@@ -2,6 +2,9 @@ import asyncio
 import json
 import logging
 import os
+
+from dotenv import load_dotenv
+load_dotenv()
 import shutil
 import tempfile
 import time
