@@ -40,8 +40,10 @@ def load_tools():
     """Load tools from server/tools.py."""
     try:
         from tools import ALL_TOOLS
+        print(f"[init] loaded {len(ALL_TOOLS)} tools")
         return ALL_TOOLS
-    except ImportError:
+    except Exception as e:
+        print(f"[init] failed to load tools: {type(e).__name__}: {e}")
         return []
 
 
