@@ -45,6 +45,7 @@ jobs:
 
       - name: Start FastAPI server
         run: uvicorn server.main:app --host 0.0.0.0 --port 8000 > /tmp/server.log 2>&1 &
+        # Note: server log at /tmp/server.log, check in "Wait for server" step
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           RUNNER_API_KEY: ${{ secrets.RUNNER_API_KEY }}
@@ -63,6 +64,8 @@ jobs:
           sleep 5
           echo "=== Server startup log ==="
           cat /tmp/server.log || true
+          echo "=== Registered routes ==="
+          curl -sf http://localhost:8000/openapi.json | python3 -c "import sys,json; print('\n'.join(sorted(json.load(sys.stdin)['paths'].keys())))" || true
 
       - name: Verify server health
         run: curl -sf http://localhost:8000/health

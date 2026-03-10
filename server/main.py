@@ -3,8 +3,11 @@ import json
 import logging
 import os
 
-from dotenv import load_dotenv
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not needed in production (env vars set by workflow)
 import shutil
 import tempfile
 import time
