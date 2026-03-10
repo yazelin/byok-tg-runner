@@ -1823,3 +1823,121 @@ git push
 ```bash
 ./scripts/setup.sh
 ```
+
+---
+
+### Task 17: setup-child-repo.sh — helper script for child repo secrets & workflows
+
+**Files:**
+- Create: `scripts/setup-child-repo.sh`
+
+- [ ] **Step 1: Create setup-child-repo.sh**
+
+Create `scripts/setup-child-repo.sh`:
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Usage: ./scripts/setup-child-repo.sh <owner/repo>
+# Sets up a child repo with required secrets and workflow files for the implement pipeline.
+
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+RESET='\033[0m'
+
+success() { echo -e "  ${GREEN}✓${RESET} $*"; }
+error()   { echo -e "${RED}✗ ${RESET}$*" >&2; exit 1; }
+info()    { echo -e "${CYAN}ℹ ${RESET}$*"; }
+
+CHILD_REPO="${1:-}"
+[[ -z "$CHILD_REPO" ]] && error "Usage: $0 <owner/repo>"
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PARENT_SLUG=$(cd "$REPO_ROOT" && git remote get-url origin | sed 's|.*github.com[:/]||;s|\.git$||')
+
+echo -e "\n${BOLD}Setting up child repo: ${CHILD_REPO}${RESET}\n"
+
+# Verify child repo exists
+gh repo view "$CHILD_REPO" &>/dev/null || error "Repo $CHILD_REPO not found or not accessible"
+
+# ── 1. Get parent repo secrets ──
+info "Reading parent secrets..."
+
+# We need TASK_API_KEY and the Worker URL from parent config
+# TASK_API_KEY: read from wrangler (cannot read secret values, so prompt if needed)
+WORKER_URL=$(cd "$REPO_ROOT/worker" && grep -oP 'name\s*=\s*"\K[^"]+' wrangler.toml | head -1 || true)
+if [[ -n "$WORKER_URL" ]]; then
+  WORKER_URL="https://${WORKER_URL}.workers.dev"
+else
+  read -rp "Worker URL: " WORKER_URL
+fi
+success "Worker URL: $WORKER_URL"
+
+# TASK_API_KEY cannot be read back from wrangler secrets
+if [[ -z "${TASK_API_KEY:-}" ]]; then
+  echo -e "\n${CYAN}TASK_API_KEY 無法自動讀取，請輸入（與 Worker 相同的值）:${RESET}"
+  read -rs TASK_API_KEY; echo ""
+fi
+[[ -z "$TASK_API_KEY" ]] && error "TASK_API_KEY is required"
+
+# Telegram chat ID for notifications
+if [[ -z "${TELEGRAM_CHAT_ID:-}" ]]; then
+  read -rp "Telegram Chat ID (for build notifications): " TELEGRAM_CHAT_ID
+fi
+
+# ── 2. Set child repo secrets ──
+info "Setting child repo secrets..."
+
+gh secret set RUNNER_URL    --repo "$CHILD_REPO" --body "$WORKER_URL"
+success "RUNNER_URL"
+
+gh secret set RUNNER_API_KEY --repo "$CHILD_REPO" --body "$TASK_API_KEY"
+success "RUNNER_API_KEY"
+
+gh secret set NOTIFY_CHAT_ID --repo "$CHILD_REPO" --body "$TELEGRAM_CHAT_ID"
+success "NOTIFY_CHAT_ID"
+
+# ── 3. Copy workflow templates ──
+info "Copying workflow templates..."
+
+TMPDIR=$(mktemp -d)
+gh repo clone "$CHILD_REPO" "$TMPDIR/repo" -- --depth 1 2>/dev/null
+
+mkdir -p "$TMPDIR/repo/.github/workflows"
+
+for tmpl in implement.yml review.yml; do
+  if [[ -f "$REPO_ROOT/templates/workflows/$tmpl" ]]; then
+    cp "$REPO_ROOT/templates/workflows/$tmpl" "$TMPDIR/repo/.github/workflows/$tmpl"
+    success "Copied $tmpl"
+  fi
+done
+
+cd "$TMPDIR/repo"
+if ! git diff --quiet 2>/dev/null; then
+  git add .github/workflows/
+  git commit -m "ci: add implement + review workflow templates"
+  git push
+  success "Workflows pushed to $CHILD_REPO"
+else
+  info "Workflows already up to date"
+fi
+
+rm -rf "$TMPDIR"
+
+echo -e "\n${GREEN}${BOLD}Done!${RESET} Child repo $CHILD_REPO is ready."
+echo -e "  Use ${BOLD}/build $CHILD_REPO${RESET} to trigger the implement pipeline."
+echo ""
+```
+
+```bash
+chmod +x scripts/setup-child-repo.sh
+```
+
+- [ ] **Step 2: Commit**
+
+```bash
+git add scripts/setup-child-repo.sh
+git commit -m "feat: add setup-child-repo.sh for child repo secrets & workflows"
+```
