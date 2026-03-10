@@ -572,7 +572,7 @@ async function handleTelegramMessage(
   }
 
   try {
-    await fetch(`${runnerUrl}/task`, {
+    const res = await fetch(`${runnerUrl}/task`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -585,7 +585,21 @@ async function handleTelegramMessage(
         command,
       }),
     });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.error(`Runner returned ${res.status}: ${body}`);
+      await sendTelegram(
+        env.TELEGRAM_BOT_TOKEN,
+        chatId,
+        `Runner error (${res.status}). Please try again.`,
+      );
+    }
   } catch (err) {
     console.error("Failed to dispatch to runner:", err);
+    await sendTelegram(
+      env.TELEGRAM_BOT_TOKEN,
+      chatId,
+      `Failed to reach runner: ${err}`,
+    );
   }
 }

@@ -44,7 +44,7 @@ jobs:
         run: npx playwright install chromium --with-deps
 
       - name: Start FastAPI server
-        run: uvicorn server.main:app --host 0.0.0.0 --port 8000 > /dev/null 2>&1 &
+        run: uvicorn server.main:app --host 0.0.0.0 --port 8000 > /tmp/server.log 2>&1 &
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           RUNNER_API_KEY: ${{ secrets.RUNNER_API_KEY }}
@@ -59,7 +59,10 @@ jobs:
           NOTIFY_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
       - name: Wait for server to start
-        run: sleep 5
+        run: |
+          sleep 5
+          echo "=== Server startup log ==="
+          cat /tmp/server.log || true
 
       - name: Verify server health
         run: curl -sf http://localhost:8000/health
@@ -106,6 +109,22 @@ jobs:
           for i in $(seq 1 $MAX_LOOPS); do
             echo "=== [$SLOT] Check #$i/$MAX_LOOPS at $(date -u) ==="
 
+            # Check local server health — restart if crashed
+            if ! curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+              echo "WARNING: Local server not responding, restarting..."
+              tail -50 /tmp/server.log 2>/dev/null || true
+              pkill -f "uvicorn server.main" 2>/dev/null || true
+              sleep 2
+              uvicorn server.main:app --host 0.0.0.0 --port 8000 >> /tmp/server.log 2>&1 &
+              sleep 5
+              if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+                echo "Server restarted successfully"
+              else
+                echo "ERROR: Server failed to restart"
+                tail -20 /tmp/server.log 2>/dev/null || true
+              fi
+            fi
+
             PARTNER_COUNT=$(gh run list --workflow=$PARTNER_WORKFLOW \
               --repo ${{ github.repository }} \
               --status in_progress --json databaseId -q 'length')
@@ -130,3 +149,13 @@ jobs:
           echo "Runner-$SLOT loop finished, exiting gracefully"
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          RUNNER_API_KEY: ${{ secrets.RUNNER_API_KEY }}
+          FOUNDRY_API_KEY: ${{ secrets.FOUNDRY_API_KEY }}
+          LOG_REPO: yazelin/byok-tg-main
+          CALLBACK_URL: ${{ secrets.CALLBACK_URL }}
+          CALLBACK_TOKEN: ${{ secrets.CALLBACK_TOKEN }}
+          RUNNER_URL: ${{ secrets.WORKER_URL }}
+          APPS_ORG: ${{ secrets.APPS_ORG }}
+          NOTIFY_REPO: yazelin/byok-tg-main
+          NOTIFY_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
