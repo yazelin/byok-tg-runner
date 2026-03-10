@@ -429,6 +429,45 @@ async function handleTelegramMessage(
     return;
   }
 
+  // /status — show runner status and active tasks
+  if (text === "/status") {
+    const runnerUrl = await getActiveRunner(env);
+    if (!runnerUrl) {
+      await sendTelegram(env.TELEGRAM_BOT_TOKEN, chatId, "❌ 沒有可用的 Runner");
+      return;
+    }
+    try {
+      const [statusRes, debugRes] = await Promise.all([
+        fetch(`${runnerUrl}/status`, { signal: AbortSignal.timeout(5000) }),
+        fetch(`${runnerUrl}/debug`, { signal: AbortSignal.timeout(5000) }),
+      ]);
+      const status = (await statusRes.json()) as Record<string, unknown>;
+      const debug = (await debugRes.json()) as Record<string, unknown>;
+      const uptime = String(status.uptime ?? "?");
+      const tasks = debug.active_tasks as Record<string, { repo: string; action: string; elapsed_seconds: number }> | undefined;
+      const lastErr = debug.last_implement_error as string | null;
+
+      let msg = `🟢 Runner 運行中\n⏱ Uptime: ${uptime}\n`;
+      if (tasks && Object.keys(tasks).length > 0) {
+        msg += "\n📋 正在執行的任務：\n";
+        for (const [id, t] of Object.entries(tasks)) {
+          const mins = Math.floor(t.elapsed_seconds / 60);
+          const secs = t.elapsed_seconds % 60;
+          msg += `• ${t.repo} | ${t.action} | ${mins}m${secs}s\n`;
+        }
+      } else {
+        msg += "\n✅ 目前沒有正在執行的任務";
+      }
+      if (lastErr) {
+        msg += `\n\n⚠️ 最近錯誤：${lastErr.slice(0, 200)}`;
+      }
+      await sendTelegram(env.TELEGRAM_BOT_TOKEN, chatId, msg);
+    } catch (err) {
+      await sendTelegram(env.TELEGRAM_BOT_TOKEN, chatId, `Runner 無回應: ${err}`);
+    }
+    return;
+  }
+
   // Store user message and increment totalMessages for all non-reset commands
   await appendHistory(env.RUNNER_KV, chatId, "user", text);
   await incrementStats(env.RUNNER_KV, "totalMessages");
