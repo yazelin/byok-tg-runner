@@ -378,7 +378,7 @@ async def _process_task(req: TaskRequest) -> None:
                 pass  # Ignore malformed history
 
         # Longer timeout for app creation (many tool calls)
-        timeout = 600 if req.command == "app" else 300
+        timeout = 900 if req.command == "app" else 300
         reply = await run_copilot_sdk(prompt, timeout_seconds=timeout)
         await send_telegram(req.chat_id, reply)
         await post_callback(req.chat_id, reply)
@@ -685,7 +685,7 @@ async def _process_implement(req: ImplementRequest, task_id: str) -> None:
         print(f"[implement] sending to Copilot SDK task_id={task_id}")
         reply = await run_copilot_sdk(prompt, extra_tools=shell_tools,
                                        system_prompt_override=system_prompt,
-                                       timeout_seconds=600)
+                                       timeout_seconds=1800)
         print(f"[implement] AI done task_id={task_id} action={req.action} reply_len={len(reply)}")
         print(f"[implement] AI reply preview: {reply[:500]}")
 
