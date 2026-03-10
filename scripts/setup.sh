@@ -244,6 +244,12 @@ info "點選 'Generate new token (classic)'。"
 info "勾選 'workflow' scope，然後生成 token。"
 ask GH_PAT "貼上你的 GitHub PAT：" true
 
+# ── CALLBACK_TOKEN ──
+echo ""
+echo -e "${BOLD}[Callback Token]${RESET}"
+CALLBACK_TOKEN=$(openssl rand -hex 32)
+success "已自動生成 CALLBACK_TOKEN（Runner ↔ Worker callback 驗證用）"
+
 # ── Foundry API Key ──
 echo ""
 echo -e "${BOLD}[Azure AI Foundry API Key]${RESET}"
@@ -269,6 +275,7 @@ set_secret "KV_NAMESPACE_ID"    "$KV_NAMESPACE_ID"
 set_secret "RUNNER_API_KEY"     "$RUNNER_API_KEY"
 set_secret "GH_PAT"            "$GH_PAT"
 set_secret "FOUNDRY_API_KEY"   "$FOUNDRY_API_KEY"
+set_secret "CALLBACK_TOKEN"    "$CALLBACK_TOKEN"
 
 # ─────────────────────────────────────────────
 # 7. 設定 Wrangler Secrets & Deploy Worker
@@ -280,7 +287,8 @@ cd worker
 echo "$RUNNER_API_KEY"     | npx wrangler secret put RUNNER_API_KEY     2>&1 | grep -v "WARNING\|update available"
 echo "$TELEGRAM_BOT_TOKEN" | npx wrangler secret put TELEGRAM_BOT_TOKEN 2>&1 | grep -v "WARNING\|update available"
 echo "$ALLOWED_CHAT_ID"    | npx wrangler secret put ALLOWED_CHAT_ID    2>&1 | grep -v "WARNING\|update available"
-success "Wrangler secrets 已設定（RUNNER_API_KEY, TELEGRAM_BOT_TOKEN, ALLOWED_CHAT_ID）"
+echo "$CALLBACK_TOKEN"     | npx wrangler secret put CALLBACK_TOKEN     2>&1 | grep -v "WARNING\|update available"
+success "Wrangler secrets 已設定（RUNNER_API_KEY, TELEGRAM_BOT_TOKEN, ALLOWED_CHAT_ID, CALLBACK_TOKEN）"
 
 info "部署 Worker..."
 DEPLOY_OUTPUT=$(npx wrangler deploy 2>&1)
