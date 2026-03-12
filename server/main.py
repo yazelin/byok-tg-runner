@@ -201,7 +201,7 @@ async def post_callback(chat_id: str, text: str) -> None:
                     "text": text[:500],
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 },
-                headers={"X-Secret": CALLBACK_TOKEN},
+                headers={"X-Secret": CALLBACK_TOKEN, "User-Agent": "byok-tg-runner/1.0"},
                 timeout=5,
             )
     except Exception:
